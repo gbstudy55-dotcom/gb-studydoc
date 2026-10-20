@@ -1,0 +1,47 @@
+{
+  "entities": {
+    "Platform": {
+      "title": "Platform",
+      "description": "Educational platform link and presentation details",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string", "maxLength": 128 },
+        "name": { "type": "string", "maxLength": 100 },
+        "url": { "type": "string", "maxLength": 500 },
+        "icon": { "type": "string" },
+        "glowColor": { "type": "string", "maxLength": 32 },
+        "category": { "type": "string", "maxLength": 64 },
+        "description": { "type": "string", "maxLength": 300 },
+        "order": { "type": "number" },
+        "active": { "type": "boolean" },
+        "openMode": { "type": "string", "enum": ["internal", "newtab", "sametab", "external"] }
+      },
+      "required": ["id", "name", "url", "order", "active"]
+    },
+    "SiteSettings": {
+      "title": "SiteSettings",
+      "description": "Global site branding, Telegram popup text, and security settings",
+      "type": "object",
+      "properties": {
+        "siteName": { "type": "string", "maxLength": 100 },
+        "tagline": { "type": "string", "maxLength": 200 },
+        "logoUrl": { "type": "string" },
+        "telegramChannelUrl": { "type": "string", "maxLength": 500 },
+        "telegramPopup": { "type": "object" },
+        "accessKeySettings": { "type": "object" },
+        "adminPasscode": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["siteName", "telegramChannelUrl"]
+    }
+  },
+  "firestore": {
+    "/platforms/{platformId}": {
+      "schema": { "$ref": "#/entities/Platform" },
+      "description": "Collection of all active and configured learning platforms"
+    },
+    "/settings/{settingsDocId}": {
+      "schema": { "$ref": "#/entities/SiteSettings" },
+      "description": "Global application configuration and Telegram settings"
+    }
+  }
+}
