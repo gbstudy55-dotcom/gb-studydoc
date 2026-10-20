@@ -28,7 +28,6 @@ import { BatchView } from './components/BatchView';
 import { VideoPlayerModal } from './components/VideoPlayerModal';
 import { PdfViewerModal } from './components/PdfViewerModal';
 import { StudentLoginModal } from './components/StudentLoginModal';
-import { StudentLoginGate } from './components/StudentLoginGate';
 import { AdminPasswordModal } from './components/AdminPasswordModal';
 import { AdminAccountsModal } from './components/AdminAccountsModal';
 import { TelegramModal } from './components/TelegramModal';
@@ -85,7 +84,41 @@ export default function App() {
   const [videoLoading, setVideoLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
 
-  // Student authentication gate: If no active session exists, the portal requires student login first
+  // Auto-connect verified GB Pro servers (11th & 12th) on boot so every student can study without needing to log in
+  useEffect(() => {
+    async function initVerifiedServers() {
+      try {
+        const existingServerIds = new Set(sessions.map((s) => s.serverId || s.userId));
+        const neededPresets = PRESET_ACCOUNTS.filter((_, idx) => {
+          const sId = idx === 0 ? 'server-1' : 'server-2';
+          return !existingServerIds.has(sId);
+        });
+
+        if (neededPresets.length > 0) {
+          const newSessions: UserSession[] = [...sessions];
+          for (const acc of neededPresets) {
+            try {
+              const sess = await loginUser(acc.phone, acc.password);
+              if (!newSessions.some((s) => (s.serverId && s.serverId === sess.serverId) || s.userId === sess.userId)) {
+                newSessions.push(sess);
+              }
+            } catch (e) {
+              console.warn('Auto-connect status:', e);
+            }
+          }
+
+          if (newSessions.length > sessions.length) {
+            setSessions(newSessions);
+            localStorage.setItem('gb_study_sessions', JSON.stringify(newSessions));
+            localStorage.setItem('gb_study_user', JSON.stringify(newSessions[0]));
+          }
+        }
+      } catch (err) {
+        console.warn('Verified servers initialization:', err);
+      }
+    }
+    initVerifiedServers();
+  }, []);
 
   // Fetch combined enrolled batches for all active sessions & catalog
   useEffect(() => {
@@ -272,38 +305,6 @@ export default function App() {
     if (categoryFilter === 'CRASH') return name.includes('क्रैश') || name.includes('crash');
     return true;
   });
-
-  // Strict Student Access Gate: Student must log in to access the website
-  if (sessions.length === 0) {
-    return (
-      <div className="min-h-screen bg-[#0b090d]">
-        <StudentLoginGate
-          onLoginSuccess={handleStudentLoginSuccess}
-          onOpenAdminAuth={() => setIsAdminAuthOpen(true)}
-        />
-
-        {/* Secret Admin Password Modal (10 Clicks on Logo -> GBADMIN2026) */}
-        <AdminPasswordModal
-          isOpen={isAdminAuthOpen}
-          onClose={() => setIsAdminAuthOpen(false)}
-          onSuccess={handleAdminAuthSuccess}
-        />
-
-        {/* Admin Control Panel Modal (Only Admin can manage unlimited accounts & logout) */}
-        <AdminAccountsModal
-          isOpen={isAdminAccountsOpen}
-          onClose={() => setIsAdminAccountsOpen(false)}
-          sessions={sessions}
-          activeSessionIndex={activeSessionIndex}
-          onSwitchSession={(idx) => setActiveSessionIndex(idx)}
-          onAddSession={handleAddSession}
-          onRemoveSession={handleRemoveSession}
-          onLogoutAll={handleLogoutAll}
-          onLockAdmin={handleLockAdmin}
-        />
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen flex flex-col bg-[#0b090d] text-zinc-100">

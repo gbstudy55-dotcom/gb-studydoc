@@ -101,7 +101,9 @@ export const VideoPlayerModal: React.FC<VideoPlayerModalProps> = ({
 
             hlsRef.current = hls;
             hls.loadSource(currentQualityUrl);
-            hls.attachMedia(videoEl);
+            if (videoEl) {
+              hls.attachMedia(videoEl);
+            }
 
             hls.on(HlsClass.Events.MANIFEST_PARSED, () => {
               if (!isCancelled && videoRef.current) {
