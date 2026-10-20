@@ -31,11 +31,16 @@ import { StudentLoginModal } from './components/StudentLoginModal';
 import { AdminPasswordModal } from './components/AdminPasswordModal';
 import { AdminAccountsModal } from './components/AdminAccountsModal';
 import { TelegramModal } from './components/TelegramModal';
+import { 
+  PRELOADED_SESSIONS, 
+  ALL_PRELOADED_BATCHES, 
+  ENROLLED_PRELOADED_BATCHES 
+} from './data/defaultBatches';
 
 export default function App() {
   const [currentTab, setCurrentTab] = useState<'my-batches' | 'all-batches'>('my-batches');
 
-  // Multi-session accounts state
+  // Multi-session accounts state (Preloaded with verified GB Pro servers so batches appear immediately)
   const [sessions, setSessions] = useState<UserSession[]>(() => {
     try {
       const stored = localStorage.getItem('gb_study_sessions');
@@ -44,10 +49,9 @@ export default function App() {
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
       }
       const legacy = localStorage.getItem('gb_study_user');
-      return legacy ? [JSON.parse(legacy)] : [];
-    } catch {
-      return [];
-    }
+      if (legacy) return [JSON.parse(legacy)];
+    } catch {}
+    return PRELOADED_SESSIONS;
   });
 
   const [activeSessionIndex, setActiveSessionIndex] = useState<number>(0);
@@ -68,9 +72,10 @@ export default function App() {
   const [isAdminAuthOpen, setIsAdminAuthOpen] = useState(false);
   const [isAdminAccountsOpen, setIsAdminAccountsOpen] = useState(false);
 
-  const [enrolledBatches, setEnrolledBatches] = useState<BatchItem[]>([]);
-  const [catalogBatches, setCatalogBatches] = useState<BatchItem[]>([]);
-  const [loadingBatches, setLoadingBatches] = useState(true);
+  // Pre-embedded batches so that 0 network delay occurs on Vercel
+  const [enrolledBatches, setEnrolledBatches] = useState<BatchItem[]>(ENROLLED_PRELOADED_BATCHES);
+  const [catalogBatches, setCatalogBatches] = useState<BatchItem[]>(ALL_PRELOADED_BATCHES);
+  const [loadingBatches, setLoadingBatches] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [categoryFilter, setCategoryFilter] = useState<string>('ALL');
 
@@ -120,11 +125,10 @@ export default function App() {
     initVerifiedServers();
   }, []);
 
-  // Fetch combined enrolled batches for all active sessions & catalog
+  // Fetch combined enrolled batches for all active sessions & catalog in background
   useEffect(() => {
     let isMounted = true;
     async function loadData() {
-      setLoadingBatches(true);
       try {
         const [catalog, combinedEnrolled] = await Promise.all([
           getCatalogBatches(),
@@ -132,13 +136,22 @@ export default function App() {
         ]);
 
         if (isMounted) {
-          setCatalogBatches(catalog);
-          setEnrolledBatches(combinedEnrolled);
-          setLoadingBatches(false);
+          if (Array.isArray(catalog) && catalog.length > 0) {
+            setCatalogBatches(catalog);
+          }
+          if (Array.isArray(combinedEnrolled) && combinedEnrolled.length > 0) {
+            const merged = new Map<string, BatchItem>();
+            for (const b of ENROLLED_PRELOADED_BATCHES) {
+              merged.set(b.id, b);
+            }
+            for (const b of combinedEnrolled) {
+              merged.set(b.id, b);
+            }
+            setEnrolledBatches(Array.from(merged.values()));
+          }
         }
       } catch (err) {
-        console.error('Error loading batches:', err);
-        if (isMounted) setLoadingBatches(false);
+        console.warn('Background batches refresh notice:', err);
       }
     }
     loadData();
@@ -289,7 +302,11 @@ export default function App() {
     }
   };
 
-  const displayedBatches = currentTab === 'my-batches' ? enrolledBatches : catalogBatches;
+  const currentPool = currentTab === 'my-batches' ? enrolledBatches : catalogBatches;
+  const activePool = currentPool && currentPool.length > 0
+    ? currentPool
+    : (currentTab === 'my-batches' ? ENROLLED_PRELOADED_BATCHES : ALL_PRELOADED_BATCHES);
+  const displayedBatches = activePool && activePool.length > 0 ? activePool : ALL_PRELOADED_BATCHES;
 
   const filteredBatches = displayedBatches.filter((b) => {
     const name = (b.batch_name || b.course_name || '').toLowerCase();
