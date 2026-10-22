@@ -23,6 +23,12 @@ export default defineConfig(() => {
           changeOrigin: true,
           secure: false,
         },
+        '/disha-api': {
+          target: 'https://dishaonlineclassesapi.classx.co.in',
+          changeOrigin: true,
+          rewrite: (path) => path.replace(/^\/disha-api/, ''),
+          secure: false,
+        },
       },
     },
   };

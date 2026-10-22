@@ -2,7 +2,7 @@ import { BatchItem, DecryptedPdf, DecryptedVideo, FolderContentItem, StreamQuali
 import { PRELOADED_FOLDER_CONTENTS } from '../data/preloadedFolderData';
 import { PRELOADED_SESSIONS } from '../data/defaultBatches';
 
-const API_BASE = 'https://dishaonlineclassesapi.classx.co.in';
+const API_BASE = typeof window !== 'undefined' ? '/disha-api' : 'https://dishaonlineclassesapi.classx.co.in';
 
 const DEFAULT_HEADERS = {
   'Auth-Key': 'appxapi',
@@ -13,6 +13,26 @@ const DEFAULT_HEADERS = {
 // In-memory cache for fast, rate-limit resilient responses
 const FOLDER_CACHE = new Map<string, { items: FolderContentItem[]; timestamp: number }>();
 const CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes cache
+
+// Index all preloaded content by parent_id for instant, zero-failure fallback
+const PRELOADED_BY_PARENT = new Map<string, FolderContentItem[]>();
+const PRELOADED_BY_ID = new Map<string, FolderContentItem>();
+
+for (const list of Object.values(PRELOADED_FOLDER_CONTENTS)) {
+  if (!Array.isArray(list)) continue;
+  for (const item of list) {
+    if (!item || !item.id) continue;
+    PRELOADED_BY_ID.set(String(item.id), item);
+    const pid = String(item.parent_id ?? '');
+    if (pid && pid !== '-1') {
+      const existing = PRELOADED_BY_PARENT.get(pid) || [];
+      if (!existing.some((x) => String(x.id) === String(item.id))) {
+        existing.push(item);
+        PRELOADED_BY_PARENT.set(pid, existing);
+      }
+    }
+  }
+}
 
 // Protected credentials for GB STUDY verified servers
 export const PRESET_ACCOUNTS = [
@@ -264,19 +284,9 @@ async function fetchRawFolderContents(
     try {
       const res = await fetch(`${API_BASE}/get/folder_contentsv2?${params}`, { headers });
       if (res.status === 429) {
-        // Token or IP rate-limited: Attempt automatic fresh token refresh
-        try {
-          const accIdx = is11th ? 1 : 0;
-          const fresh = await loginUser(PRESET_ACCOUNTS[accIdx].phone, PRESET_ACCOUNTS[accIdx].password);
-          if (fresh?.token) {
-            headers.Authorization = fresh.token;
-            headers['User-ID'] = fresh.userId;
-            const retryRes = await fetch(`${API_BASE}/get/folder_contentsv2?${params}`, { headers });
-            const json = await retryRes.json().catch(() => ({}));
-            if (Array.isArray(json?.data) && json.data.length > 0) return json.data;
-          }
-        } catch {}
-      } else {
+        // Rate limited: break out immediately and use preloaded data without triggering device blocks
+        break;
+      } else if (res.ok) {
         const json = await res.json().catch(() => ({}));
         if (Array.isArray(json?.data) && json.data.length > 0) {
           return json.data;
@@ -285,13 +295,29 @@ async function fetchRawFolderContents(
     } catch {}
   }
 
-  // Pre-bundled static fallback (Guarantees content is NEVER empty even during Disha API rate limits or outages)
+  // 1. Direct course:parentId match
   const fallbackKey = `${courseId}:${pid}`;
   if (PRELOADED_FOLDER_CONTENTS[fallbackKey]?.length) {
     return PRELOADED_FOLDER_CONTENTS[fallbackKey];
   }
-  if (pid === '-1' && PRELOADED_FOLDER_CONTENTS[`${courseId}:-1`]?.length) {
-    return PRELOADED_FOLDER_CONTENTS[`${courseId}:-1`];
+
+  // 2. Direct parentId match across all preloaded data (Subfolders, chapters, DPPs, notes)
+  if (pid !== '-1' && PRELOADED_BY_PARENT.has(pid)) {
+    const byParent = PRELOADED_BY_PARENT.get(pid);
+    if (byParent && byParent.length > 0) return byParent;
+  }
+
+  // 3. Root parentId=-1 fallbacks (Cross-course fallback guarantees 11th & 12th batches always open)
+  if (pid === '-1') {
+    if (PRELOADED_FOLDER_CONTENTS[`${courseId}:-1`]?.length) {
+      return PRELOADED_FOLDER_CONTENTS[`${courseId}:-1`];
+    }
+    if (is11th && PRELOADED_FOLDER_CONTENTS['67:-1']?.length) {
+      return PRELOADED_FOLDER_CONTENTS['67:-1'];
+    }
+    if (!is11th && PRELOADED_FOLDER_CONTENTS['57:-1']?.length) {
+      return PRELOADED_FOLDER_CONTENTS['57:-1'];
+    }
   }
 
   return [];
@@ -320,10 +346,14 @@ export async function getFolderContents(
     if (parentId === '-1' && rawList.length === 1) {
       const first = rawList[0];
       const title = String(first.Title || first.title || '').trim().toLowerCase();
-      if (title === 'home' || String(first.material_type || '').toUpperCase() === 'FOLDER') {
+      if (title === 'home') {
         const unwrapped = await fetchRawFolderContents(courseId, String(first.id), sessions);
         if (unwrapped.length > 0) {
           rawList = unwrapped;
+        } else if (PRELOADED_FOLDER_CONTENTS[`${courseId}:${first.id}`]?.length) {
+          rawList = PRELOADED_FOLDER_CONTENTS[`${courseId}:${first.id}`];
+        } else if (PRELOADED_BY_PARENT.has(String(first.id))) {
+          rawList = PRELOADED_BY_PARENT.get(String(first.id)) || rawList;
         }
       }
     }
@@ -333,12 +363,17 @@ export async function getFolderContents(
       const fallbackKey = `${courseId}:${parentId}`;
       if (PRELOADED_FOLDER_CONTENTS[fallbackKey]?.length) {
         rawList = PRELOADED_FOLDER_CONTENTS[fallbackKey];
-      } else if (parentId === '-1' && PRELOADED_FOLDER_CONTENTS[`${courseId}:-1`]?.length) {
-        rawList = PRELOADED_FOLDER_CONTENTS[`${courseId}:-1`];
+      } else if (parentId !== '-1' && PRELOADED_BY_PARENT.has(parentId)) {
+        rawList = PRELOADED_BY_PARENT.get(parentId) || [];
+      } else if (parentId === '-1') {
+        const is11th = ['67', '68', '69', '70', '27'].includes(courseId);
+        rawList = is11th
+          ? PRELOADED_FOLDER_CONTENTS['67:-1'] || []
+          : PRELOADED_FOLDER_CONTENTS['57:-1'] || [];
       }
     }
 
-    const items: FolderContentItem[] = rawList
+    const items: FolderContentItem[] = (rawList || [])
       .map((item: any) => ({
         id: String(item?.id ?? ''),
         parent_id: item?.parent_id,
@@ -378,6 +413,9 @@ export async function getFolderContents(
     const fallbackKey = `${courseId}:${parentId}`;
     if (PRELOADED_FOLDER_CONTENTS[fallbackKey]?.length) {
       return PRELOADED_FOLDER_CONTENTS[fallbackKey];
+    }
+    if (parentId !== '-1' && PRELOADED_BY_PARENT.has(parentId)) {
+      return PRELOADED_BY_PARENT.get(parentId) || [];
     }
     return cached?.items || [];
   }

@@ -100,41 +100,16 @@ export default function App() {
   const [videoLoading, setVideoLoading] = useState(false);
   const [pdfLoading, setPdfLoading] = useState(false);
 
-  // Auto-connect verified GB Pro servers (11th & 12th) on boot so every student can study without needing to log in
+  // Guarantee verified GB Pro sessions (11th & 12th) are always in active sessions without spamming login API
   useEffect(() => {
-    async function initVerifiedServers() {
-      try {
-        const existingServerIds = new Set(sessions.map((s) => s.serverId || s.userId));
-        const neededPresets = PRESET_ACCOUNTS.filter((_, idx) => {
-          const sId = idx === 0 ? 'server-1' : 'server-2';
-          return !existingServerIds.has(sId);
-        });
-
-        if (neededPresets.length > 0) {
-          const newSessions: UserSession[] = [...sessions];
-          for (const acc of neededPresets) {
-            try {
-              const sess = await loginUser(acc.phone, acc.password);
-              if (!newSessions.some((s) => (s.serverId && s.serverId === sess.serverId) || s.userId === sess.userId)) {
-                newSessions.push(sess);
-              }
-            } catch (e) {
-              console.warn('Auto-connect status:', e);
-            }
-          }
-
-          if (newSessions.length > sessions.length) {
-            setSessions(newSessions);
-            localStorage.setItem('gb_study_sessions', JSON.stringify(newSessions));
-            localStorage.setItem('gb_study_user', JSON.stringify(newSessions[0]));
-          }
-        }
-      } catch (err) {
-        console.warn('Verified servers initialization:', err);
-      }
+    const existingIds = new Set(sessions.map((s) => s.userId));
+    const missing = PRELOADED_SESSIONS.filter((p) => !existingIds.has(p.userId));
+    if (missing.length > 0) {
+      const merged = [...sessions, ...missing];
+      setSessions(merged);
+      localStorage.setItem('gb_study_sessions', JSON.stringify(merged));
     }
-    initVerifiedServers();
-  }, []);
+  }, [sessions]);
 
   // Fetch combined enrolled batches for all active sessions & catalog in background
   useEffect(() => {

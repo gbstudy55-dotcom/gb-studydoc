@@ -58,7 +58,7 @@ export interface FolderContentItem {
   duration?: string;
   live_status?: number;
   live_type?: number | string;
-  livestream_links?: string[];
+  livestream_links?: (string | { quality?: string; path?: string; [key: string]: any })[];
   [key: string]: any;
 }
 
